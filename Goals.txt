@@ -1,0 +1,31 @@
+Nodes:
+Give the ability for a client to be given the IP/port of a registry and be able to register itself as a node
+Receive a message telling it to connect to another machine
+Receive a message telling it to start send messages to the next node
+Receive messages from the preceeding node and forward them to the next node unless it originally sent
+After it's finished send back a summary of messages sent
+
+Registry:
+Start up and listen for incoming register commands
+After it's given a command, send a message to all nodes to tell them which node they should connect to
+After another command it tells all of the nodes to begin sending messages
+Report when all nodes have finished sending messages
+
+Take in a command to tell all nodes to stop
+
+Milestone 1:
+Send messages from one node to the next using a standard
+
+Milestone 2:
+Create the registry and the ability to register nodes
+
+Milestone 3:
+Configure the message to tell all nodes to start sending data and forward individual messages
+
+Milestone 4:
+Return sending statistics back to the registry
+
+
+Client:
+Make a separate go routine to send messages
+Listen for messages in the "main" thread
