@@ -10,14 +10,13 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"sync/atomic"
 )
 
 func runMessageNode(host string, port string, destination_host string, destination_port string, messageCount string) {
 	id := getRandomId()
 	var registrySocket net.Conn
 	go registerNode(id, port, destination_port, registrySocket)
-	numData := new(uint32)
+	numData := new(int)
 	*numData = 0
 	peerSocket := new(net.Conn)
 	go handleRequest(host, port, numData, peerSocket)
@@ -30,7 +29,7 @@ func runMessageNode(host string, port string, destination_host string, destinati
 			return
 		}
 		if strings.Contains(input, "status") {
-			fmt.Println("Num Messages " + strconv.Itoa(int(*numData)))
+			fmt.Println("Num Messages " + strconv.Itoa(*numData))
 		}
 	}
 }
@@ -64,7 +63,7 @@ func registerNode(id int, port string, destination_port string, registrySocket n
 	}
 }
 
-func handleRequest(host string, port string, numData *uint32, peerSocket *net.Conn) {
+func handleRequest(host string, port string, numData *int, peerSocket *net.Conn) {
 	fmt.Println("Handle Request")
 	listen := getListener(host, port)
 	for {
@@ -72,7 +71,7 @@ func handleRequest(host string, port string, numData *uint32, peerSocket *net.Co
 		go listenForMessages(conn, port, numData, peerSocket)
 	}
 }
-func listenForMessages(conn net.Conn, port string, numData *uint32, peerSocket *net.Conn) {
+func listenForMessages(conn net.Conn, port string, numData *int, peerSocket *net.Conn) {
 	for {
 		messageId := getMessageId(conn)
 		//messageIdString := strconv.Itoa(int(messageId))
@@ -84,13 +83,23 @@ func listenForMessages(conn net.Conn, port string, numData *uint32, peerSocket *
 				fmt.Println("PeerSocket is not null")
 			}
 		case DATA_TRAFFIC_ID:
-			handleDataTraffic(conn, peerSocket, port, numData)
-			atomic.AddUint32(numData, 1)
+			//fmt.Println("Data Traffic!")
+			handleDataTraffic(conn, peerSocket, port)
+			*numData = *numData + 1
+			if *numData%10000 == 0 {
+				println("Messages received: ", *numData)
+				//if *numData%150000 == 0 {
+				//	time.Sleep(1)
+				//}
+			}
 		case TASK_INITIATE_ID:
 			fmt.Println("Task Initiate")
 			handleTaskInitiate(conn, peerSocket, port)
 		default:
 			fmt.Println("Something went wrong: " + strconv.Itoa(int(messageId)))
+			//buffer := make([]byte, 4)
+			//conn.Read(buffer)
+			//*numData = *numData + 1
 		}
 	}
 }
@@ -137,23 +146,20 @@ func handleConnectionsDirective(conn net.Conn) net.Conn {
 	}
 	return peerSocket
 }
-func handleDataTraffic(conn net.Conn, peerSocket *net.Conn, port string, numData *uint32) {
+func handleDataTraffic(conn net.Conn, peerSocket *net.Conn, port string) {
 	buffer := make([]byte, 4)
 	conn.Read(buffer)
-	nodeId := binary.LittleEndian.Uint32(buffer)
-	nodeIdNum := strconv.Itoa(int(nodeId))
+	//nodeId := binary.LittleEndian.Uint32(buffer)
+	//nodeIdNum := strconv.Itoa(int(nodeId))
 	conn.Read(buffer)
-	randomVal := binary.LittleEndian.Uint32(buffer)
-	if atomic.LoadUint32(numData)%10000 == 0 {
-		println("Messages received: ", atomic.LoadUint32(numData))
-	}
-	if nodeIdNum != port && peerSocket != nil {
-		dataTraffic := GetDataTraffic(nodeId, randomVal)
-		if peerSocket == nil {
-			fmt.Println("PeerSocket is Null")
-		}
-		forwardMessage(peerSocket, dataTraffic)
-	}
+	//randomVal := binary.LittleEndian.Uint32(buffer)
+	//if nodeIdNum != port {
+	//	dataTraffic := GetDataTraffic(nodeId, randomVal)
+	//	if peerSocket == nil {
+	//		fmt.Println("PeerSocket is Null")
+	//	}
+	//	forwardMessage(peerSocket, dataTraffic)
+	//}
 }
 
 func forwardMessage(peerSocket *net.Conn, dataTraffic DataTraffic) {

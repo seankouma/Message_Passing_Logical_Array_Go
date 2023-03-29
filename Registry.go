@@ -26,7 +26,7 @@ func runRegistry() {
 		if strings.Contains(input, "connect") {
 			setupRing(messengers)
 		} else if strings.Contains(input, "begin") {
-			commence(messengers, 100000)
+			commence(messengers, 250000)
 		}
 	}
 }
