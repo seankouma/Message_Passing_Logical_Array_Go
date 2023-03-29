@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"log"
+	"math/rand"
 	"net"
 	"os"
 	"strconv"
@@ -24,6 +25,8 @@ func runRegistry() {
 		}
 		if strings.Contains(input, "connect") {
 			setupRing(messengers)
+		} else if strings.Contains(input, "begin") {
+			commence(messengers, 100000)
 		}
 	}
 }
@@ -47,28 +50,34 @@ func handleRequests(host string, port string, messengers map[uint32]net.Conn) {
 		}
 		fmt.Println("Size of messengers: " + strconv.Itoa(len(messengers)))
 		buffer := make([]byte, 4)
-		for {
-			_, err := conn.Read(buffer)
+		_, err = conn.Read(buffer)
+		if err != nil {
+			log.Fatal(err)
+		}
+		messageId := binary.LittleEndian.Uint32(buffer)
+		messageIdString := strconv.Itoa(int(messageId))
+		println("Message Id: " + messageIdString)
+		switch messageId {
+		case REGISTER_REQUEST_ID:
+			_, err = conn.Read(buffer) // Ignoring the ID for now
+			_, err = conn.Read(buffer)
+			port := binary.LittleEndian.Uint32(buffer)
+			portString := strconv.Itoa(int(port))
+			println("Port: " + portString)
+			tcpAddr, _ := net.ResolveTCPAddr("tcp", "localhost:"+portString)
+			fmt.Println(conn.RemoteAddr().String())
+			tcpConn, err := net.DialTCP("tcp", nil, tcpAddr)
 			if err != nil {
-				log.Fatal(err)
+				fmt.Println("There was a resolve error")
+				return
 			}
-			messageId := binary.LittleEndian.Uint32(buffer)
-			messageIdString := strconv.Itoa(int(messageId))
-			println("Message Id: " + messageIdString)
-			switch messageId {
-			case REGISTER_REQUEST:
-				_, err = conn.Read(buffer)
-				nodeId := binary.LittleEndian.Uint32(buffer)
-				nodeIdString := strconv.Itoa(int(nodeId))
-				println("Random ID: " + nodeIdString)
-				_, err = conn.Read(buffer)
-				port := binary.LittleEndian.Uint32(buffer)
-				portString := strconv.Itoa(int(port))
-				println("Port: " + portString)
-				messengers[nodeId] = conn
-			}
+			messengers[port] = tcpConn
 		}
 	}
+}
+func getRandomNodeId(randomSource rand.Source) int {
+	randGen := rand.New(randomSource)
+	return randGen.Intn(9999)
 }
 func setupRing(messengers map[uint32]net.Conn) {
 	keys := make([]uint32, 0, len(messengers))
@@ -78,10 +87,17 @@ func setupRing(messengers map[uint32]net.Conn) {
 	}
 	for i := 0; i < len(keys)-1; i++ {
 		port, _ := strconv.Atoi(messengers[keys[i+1]].LocalAddr().String()[strings.Index(messengers[keys[i+1]].LocalAddr().String(), ":"):])
-		connect := GetConnectionsDirective(keys[i+1], uint32(port))
+		connect := GetConnectionsDirective(uint32(port), keys[i+1])
 		messengers[keys[i]].Write(GetConnectionsDirectiveBytes(connect))
 	}
 	port, _ := strconv.Atoi(messengers[keys[0]].LocalAddr().String()[strings.Index(messengers[keys[0]].LocalAddr().String(), ":"):])
-	connect := GetConnectionsDirective(keys[0], uint32(port))
+	connect := GetConnectionsDirective(uint32(port), keys[0])
 	messengers[keys[len(keys)-1]].Write(GetConnectionsDirectiveBytes(connect))
+}
+
+func commence(messengers map[uint32]net.Conn, numMessagesToSend uint32) {
+	for k := range messengers {
+		task := GetTaskInitiate(numMessagesToSend)
+		messengers[k].Write(GetTaskInitiateBytes(task))
+	}
 }

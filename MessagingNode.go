@@ -10,14 +10,17 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync/atomic"
 )
 
 func runMessageNode(host string, port string, destination_host string, destination_port string, messageCount string) {
 	id := getRandomId()
-	var peerSocket net.Conn
 	var registrySocket net.Conn
 	go registerNode(id, port, destination_port, registrySocket)
-	go handleRequest(host, port, peerSocket)
+	numData := new(uint32)
+	*numData = 0
+	peerSocket := new(net.Conn)
+	go handleRequest(host, port, numData, peerSocket)
 	reader := bufio.NewReader(os.Stdin)
 	fmt.Println("Ready for input")
 	for {
@@ -26,9 +29,8 @@ func runMessageNode(host string, port string, destination_host string, destinati
 			fmt.Println("Error reading")
 			return
 		}
-		if strings.Contains(input, "connect") {
-			fmt.Println("Read input")
-			go sendMessages(destination_host, destination_port, messageCount, id)
+		if strings.Contains(input, "status") {
+			fmt.Println("Num Messages " + strconv.Itoa(int(*numData)))
 		}
 	}
 }
@@ -62,91 +64,120 @@ func registerNode(id int, port string, destination_port string, registrySocket n
 	}
 }
 
-func handleRequest(host string, port string, peerSocket net.Conn) {
+func handleRequest(host string, port string, numData *uint32, peerSocket *net.Conn) {
 	fmt.Println("Handle Request")
-	listen, err := net.Listen("tcp", host+":"+port)
+	listen := getListener(host, port)
+	for {
+		conn := getConnection(listen)
+		go listenForMessages(conn, port, numData, peerSocket)
+	}
+}
+func listenForMessages(conn net.Conn, port string, numData *uint32, peerSocket *net.Conn) {
+	for {
+		messageId := getMessageId(conn)
+		//messageIdString := strconv.Itoa(int(messageId))
+		//println("Message Id: " + messageIdString)
+		switch messageId {
+		case CONNECTIONS_DIRECTIVE_ID:
+			*peerSocket = handleConnectionsDirective(conn)
+			if peerSocket != nil {
+				fmt.Println("PeerSocket is not null")
+			}
+		case DATA_TRAFFIC_ID:
+			handleDataTraffic(conn, peerSocket, port, numData)
+			atomic.AddUint32(numData, 1)
+		case TASK_INITIATE_ID:
+			fmt.Println("Task Initiate")
+			handleTaskInitiate(conn, peerSocket, port)
+		default:
+			fmt.Println("Something went wrong: " + strconv.Itoa(int(messageId)))
+		}
+	}
+}
+
+func getMessageId(conn net.Conn) uint32 {
+	buffer := make([]byte, 4)
+	_, err := conn.Read(buffer)
 	if err != nil {
 		log.Fatal(err)
-		os.Exit(1)
 	}
-	// close listener
-	defer listen.Close()
+	return binary.LittleEndian.Uint32(buffer)
+}
+func getConnection(listen net.Listener) net.Conn {
 	conn, err := listen.Accept()
 	if err != nil {
 		log.Fatal(err)
-		os.Exit(1)
 	}
-	fmt.Println("Made a connection")
+	return conn
+}
+func getListener(host string, port string) net.Listener {
+	listen, err := net.Listen("tcp", host+":"+port)
+	if err != nil {
+		log.Fatal(err)
+	}
+	return listen
+}
+func handleConnectionsDirective(conn net.Conn) net.Conn {
 	buffer := make([]byte, 4)
-	for {
-		_, err := conn.Read(buffer)
-		if err != nil {
-			log.Fatal(err)
-		}
-		messageId := binary.LittleEndian.Uint32(buffer)
-		messageIdString := strconv.Itoa(int(messageId))
-		println("Message Id: " + messageIdString)
-		switch messageId {
-		case DATA_TRAFFIC_ID:
-			_, err = conn.Read(buffer)
-			randomVal := binary.LittleEndian.Uint32(buffer)
-			randomNum := strconv.Itoa(int(randomVal))
-			println("Random num: " + randomNum)
-		case CONNECTIONS_DIRECTIVE_ID:
-			_, err = conn.Read(buffer)
-			nodeID := binary.LittleEndian.Uint32(buffer)
-			nodeIDStr := strconv.Itoa(int(nodeID))
-			println("Node ID: " + nodeIDStr)
-			_, err = conn.Read(buffer)
-			port := binary.LittleEndian.Uint32(buffer)
-			portStr := strconv.Itoa(int(port))
-			println("Port String: " + portStr)
-			tcpServer, err := net.ResolveTCPAddr("tcp", "localhost:"+portStr)
-			if err != nil {
-				fmt.Println("There was a resolve error")
-				return
-			}
-
-			peerSocket, err = net.DialTCP("tcp", nil, tcpServer)
-			if err != nil {
-				fmt.Println("There was a dial error")
-				return
-			}
-		}
-
+	conn.Read(buffer)
+	nodeID := binary.LittleEndian.Uint32(buffer)
+	nodeIDStr := strconv.Itoa(int(nodeID))
+	println("Node ID: " + nodeIDStr)
+	conn.Read(buffer)
+	port := binary.LittleEndian.Uint32(buffer)
+	portStr := strconv.Itoa(int(port))
+	println("Port String: " + portStr)
+	tcpServer, err := net.ResolveTCPAddr("tcp", "localhost:"+portStr)
+	if err != nil {
+		log.Fatal(err)
 	}
-	// close conn
-	conn.Close()
+	peerSocket, err := net.DialTCP("tcp", nil, tcpServer)
+	if err != nil {
+		log.Fatal(err)
+	}
+	return peerSocket
+}
+func handleDataTraffic(conn net.Conn, peerSocket *net.Conn, port string, numData *uint32) {
+	buffer := make([]byte, 4)
+	conn.Read(buffer)
+	nodeId := binary.LittleEndian.Uint32(buffer)
+	nodeIdNum := strconv.Itoa(int(nodeId))
+	conn.Read(buffer)
+	randomVal := binary.LittleEndian.Uint32(buffer)
+	if atomic.LoadUint32(numData)%10000 == 0 {
+		println("Messages received: ", atomic.LoadUint32(numData))
+	}
+	if nodeIdNum != port && peerSocket != nil {
+		dataTraffic := GetDataTraffic(nodeId, randomVal)
+		if peerSocket == nil {
+			fmt.Println("PeerSocket is Null")
+		}
+		forwardMessage(peerSocket, dataTraffic)
+	}
 }
 
-func sendMessages(destinationHost string, destinationPort string, messageCount string, id int) {
-	fmt.Println("Send Messages")
-	tcpServer, err := net.ResolveTCPAddr("tcp", destinationHost+":"+destinationPort)
+func forwardMessage(peerSocket *net.Conn, dataTraffic DataTraffic) {
+	_, err := (*peerSocket).Write(GetDataTrafficBytes(dataTraffic))
 	if err != nil {
-		fmt.Println("There was a resolve error")
-		return
+		log.Fatal(err)
 	}
-
-	conn, err := net.DialTCP("tcp", nil, tcpServer)
-	if err != nil {
-		fmt.Println("There was a dial error")
-		return
-	}
-
-	messageCountInt, _ := strconv.Atoi(messageCount)
-	for i := 0; i < messageCountInt; i++ {
+}
+func handleTaskInitiate(conn net.Conn, peerSocket *net.Conn, port string) {
+	buffer := make([]byte, 4)
+	conn.Read(buffer)
+	numMessages := binary.LittleEndian.Uint32(buffer)
+	fmt.Println("Num of messages: " + strconv.Itoa(int(numMessages)))
+	go sendDataTraffic(peerSocket, numMessages, port)
+}
+func sendDataTraffic(peerSocket *net.Conn, numMessages uint32, port string) {
+	portInt, _ := strconv.Atoi(port)
+	randomSource := rand.NewSource(35)
+	randGen := rand.New(randomSource)
+	for i := 0; i < int(numMessages); i++ {
+		dataTraffic := GetDataTraffic(uint32(portInt), randGen.Uint32())
+		_, err := (*peerSocket).Write(GetDataTrafficBytes(dataTraffic))
 		if err != nil {
 			log.Fatal(err)
-		}
-		randomSource := rand.NewSource(42)
-		randGen := rand.New(randomSource)
-		dataTraffic := GetDataTraffic(uint32(id), randGen.Uint32())
-		_, err = conn.Write(GetDataTrafficBytes(dataTraffic))
-		if err != nil {
-			fmt.Println("There was a writing error")
-			return
-		} else {
-			fmt.Println("Wrote the bytes")
 		}
 	}
 }

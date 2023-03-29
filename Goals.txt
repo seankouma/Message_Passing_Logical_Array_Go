@@ -29,3 +29,5 @@ Return sending statistics back to the registry
 Client:
 Make a separate go routine to send messages
 Listen for messages in the "main" thread
+
+Benchmark handleDataTraffic() vs go handleDataTraffic()
